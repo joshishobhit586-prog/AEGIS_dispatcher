@@ -1,0 +1,5 @@
+pytest
+# pandas and matplotlib are added in the evaluation-charts milestone:
+pygame
+# pandas
+# matplotlib
