@@ -1,0 +1,8 @@
+pytest
+pygame
+fastapi
+uvicorn[standard]
+httpx          # used by the API tests (FastAPI TestClient)
+# pandas and matplotlib are added in the evaluation-charts milestone:
+# pandas
+# matplotlib
