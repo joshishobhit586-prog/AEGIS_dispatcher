@@ -15,11 +15,14 @@ class Warehouse:
         self.height = height
         self.shelves: Set[Cell] = set()
         self.blocked: Set[Cell] = set()  # temporary obstacles
+        # One unit represents one package. Stable initial values keep scenarios reproducible.
+        self.inventory = {}
         for cell in shelves:
             cell = (int(cell[0]), int(cell[1]))
             if not self.in_bounds(cell):
                 raise ValueError(f"shelf {cell} is out of bounds")
             self.shelves.add(cell)
+            self.inventory[cell] = 4 + ((cell[0] * 7 + cell[1] * 3) % 20)
 
     @classmethod
     def from_layout(cls, rows: List[str]) -> "Warehouse":

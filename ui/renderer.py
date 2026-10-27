@@ -64,6 +64,7 @@ class GridView:
             r["robot_id"]: robot_color(i) for i, r in enumerate(snap["robots"])
         }
         shelves, blocked = set(map(tuple, snap["shelves"])), set(map(tuple, snap["blocked"]))
+        inventory = {tuple(item["cell"]): int(item["quantity"]) for item in snap.get("inventory", [])}
         for y in range(self.height):
             for x in range(self.width):
                 rect = self.cell_rect((x, y))
@@ -89,9 +90,9 @@ class GridView:
                                 pygame.draw.rect(surf, carton_color,
                                                  pygame.Rect(cx, cy, carton_w, carton_h),
                                                  border_radius=1)
-                        # Stable stock count per shelf cell, so the demo looks
-                        # consistent across runs without introducing random UI state.
-                        stock = 4 + ((x * 7 + y * 3) % 20)
+                        # Read the live stock from simulation state: pickup decrements,
+                        # delivery increments. Fallback supports older snapshots.
+                        stock = inventory.get((x, y), 4 + ((x * 7 + y * 3) % 20))
                         count_font = fonts.get("tiny")
                         if count_font:
                             label = count_font.render(str(stock), True, (238, 244, 252))
@@ -103,6 +104,10 @@ class GridView:
                                            (rect.centerx - 3, rect.centery), 2)
                         pygame.draw.circle(surf, (237, 174, 82),
                                            (rect.centerx + 3, rect.centery), 2)
+                        count_font = fonts.get("tiny")
+                        if count_font and self.cell >= 18:
+                            label = count_font.render(str(inventory.get((x, y), 0)), True, (238, 244, 252))
+                            surf.blit(label, label.get_rect(center=(rect.centerx, rect.bottom - 5)))
                 elif (x, y) in blocked:
                     pygame.draw.rect(surf, BLOCK_BG, rect)
                     pygame.draw.rect(surf, FLOOR_LINE, rect, 1)

@@ -180,6 +180,8 @@ class Simulator:
             "width": self.warehouse.width,
             "height": self.warehouse.height,
             "shelves": sorted(self.warehouse.shelves),
+            "inventory": [{"cell": cell, "quantity": self.warehouse.inventory[cell]}
+                          for cell in sorted(self.warehouse.shelves)],
             "blocked": sorted(self.warehouse.blocked),
             "robots": [
                 {
@@ -378,21 +380,46 @@ class Simulator:
         else:
             self._assign_incremental([task.task_id])
 
+    def _nearest_shelf(self, cell: Cell):
+        """Associate a floor pickup/delivery point with its nearest shelf."""
+        if not self.warehouse.shelves:
+            return None
+        return min(self.warehouse.shelves,
+                   key=lambda shelf: (abs(shelf[0] - cell[0]) + abs(shelf[1] - cell[1]), shelf))
+
     # ------------------------------------------------------- robot behaviour
     def _process_arrivals(self, robot: Robot) -> None:
         while robot.current_task_id is not None and robot.available:
             task = self.tasks[robot.current_task_id]
             if robot.phase == PHASE_TO_PICKUP and robot.position == task.pickup:
+                source_shelf = self._nearest_shelf(task.pickup)
+                stock_details = {}
+                if source_shelf is not None:
+                    stock = self.warehouse.inventory[source_shelf]
+                    if stock > 0:
+                        self.warehouse.inventory[source_shelf] = stock - 1
+                    stock_details = {"shelf": source_shelf,
+                                     "quantity": self.warehouse.inventory[source_shelf],
+                                     "stock_changed": stock > 0}
                 task.start(self.tick)
                 robot.phase = PHASE_TO_DELIVERY
                 robot.clear_route()
-                self._log("pickup", f"{robot.robot_id} picked up {task.task_id}", task_id=task.task_id)
+                self._log("pickup", f"{robot.robot_id} picked up {task.task_id}",
+                          task_id=task.task_id, **stock_details)
             elif robot.phase == PHASE_TO_DELIVERY and robot.position == task.delivery:
+                destination_shelf = self._nearest_shelf(task.delivery)
+                stock_details = {}
+                if destination_shelf is not None:
+                    self.warehouse.inventory[destination_shelf] += 1
+                    stock_details = {"shelf": destination_shelf,
+                                     "quantity": self.warehouse.inventory[destination_shelf],
+                                     "stock_changed": True}
                 task.complete(self.tick)
                 robot.current_task_id = None
                 robot.phase = None
                 robot.clear_route()
-                self._log("delivery", f"{robot.robot_id} delivered {task.task_id}", task_id=task.task_id)
+                self._log("delivery", f"{robot.robot_id} delivered {task.task_id}",
+                          task_id=task.task_id, **stock_details)
             else:
                 break
 
