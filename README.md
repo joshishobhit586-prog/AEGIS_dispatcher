@@ -5,14 +5,14 @@ or an urgent delivery appears, AEGIS replans routes and reassigns unfinished tas
 across the fleet, and is compared against a baseline that only reroutes locally.
 
 **Status:** grid, A*, robots/tasks, disruptions, recovery, baseline, metrics, benchmarks,
-Pygame UI, FastAPI backend, and user-chosen grid size / robot count are done.
-Not built yet: SQLite persistence and charts.
+Pygame UI, FastAPI backend, SQLite persistence, and user-chosen grid size / robot count are done.
+Not built yet: charts.
 
 ## Setup
 ```bash
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 python -m pip install -r requirements.txt
-python -m pytest                                    # 104 tests
+python -m pytest
 python main.py                                      # Pygame UI
 python main.py --cli --scenario scenarios/robot_failure.json --strategy aegis --log
 python main.py --benchmark                          # writes results/benchmark_results.{csv,json}
@@ -73,11 +73,17 @@ Start with `python main.py --api` (local only by default) and open `/docs` for i
 | POST | `/simulations/{id}/events` | `robot_failure`, `robot_restore`, `block_cell`, `unblock_cell`, `add_task` |
 | GET | `/simulations/{id}/events`, `/metrics` | event log, measured metrics |
 | DELETE | `/simulations/{id}` | discard a run |
-| POST | `/benchmarks` | baseline vs aegis on identical inputs (named and/or custom) |
+| POST | `/benchmarks` | baseline vs aegis on identical inputs (named and/or custom); results are saved |
+| GET | `/benchmarks/history` | earlier benchmark rows, newest first, grouped by `batch_id` |
+| GET | `/history` | saved runs (`?scenario=`, `?strategy=`, `?limit=`) - survives restarts |
+| GET | `/history/{id}`, `/history/{id}/events`, `/history/{id}/journal` | saved metrics, event log, action journal |
+| GET | `/history/compare?scenario=robot_failure` | latest finished baseline vs aegis run, with the difference |
+| POST | `/history/{id}/resume` | bring a saved run back to life (replays its journal) |
+| DELETE | `/history/{id}` | delete a saved run |
 
 Invalid input returns 404 (unknown run/robot/scenario), 409 (rejected by the simulation, e.g. blocking
-a shelf or failing a dead robot) or 422 (malformed / out of range). Runs live in memory (max 50, oldest
-evicted). There is no authentication or rate limiting, so do not expose it to the internet as-is.
+a shelf or failing a dead robot) or 422 (malformed / out of range). Live runs are held in memory (max 50, oldest
+evicted from memory) and every run is also saved to SQLite, so nothing is lost (see below). There is no authentication or rate limiting, so do not expose it to the internet as-is.
 
 ```bash
 curl -X POST localhost:8000/simulations -H 'content-type: application/json' \
@@ -86,9 +92,32 @@ curl -X POST localhost:8000/simulations/<run_id>/run
 curl localhost:8000/simulations/<run_id>/metrics
 ```
 
+## Persistence (SQLite)
+Every run is saved automatically to `data/aegis.db` (standard-library `sqlite3`, nothing to install).
+The simulator is deterministic, so a run is stored as its scenario + strategy + an ordered **journal** of
+actions (steps, injected events, run-to-end). `POST /history/{id}/resume` replays the journal and returns
+the run exactly as it was, even after a server restart or eviction from the 50-run memory cap. The latest
+status, metrics and event log are cached per run so `/history` and `/history/compare` need no replay.
+
+| Setting | Meaning |
+|---|---|
+| `AEGIS_DB=path/to/file.db` | use another file (default `data/aegis.db`) |
+| `AEGIS_DB=:memory:` | in memory only (the tests use this) |
+| `AEGIS_DB=off` | disable persistence; `/history` endpoints return 503 |
+
+At most 500 runs are kept (oldest pruned). A database write failure is logged and never breaks a run.
+`DELETE /simulations/{id}` only unloads a run from memory; `DELETE /history/{id}` removes it for good.
+
+```bash
+curl -X POST localhost:8000/simulations -H 'content-type: application/json' -d '{"scenario":"robot_failure"}'
+curl localhost:8000/history                                  # ... restart the server ...
+curl -X POST localhost:8000/history/<run_id>/resume          # back where you left off
+curl "localhost:8000/history/compare?scenario=robot_failure" # baseline vs aegis from saved runs
+```
+
 ## Layout
 `simulation/` grid, robot, task, tick simulator - `algorithms/` A*, assignment, conflicts,
-recovery - `services/` UI-facing service layer - `api/` FastAPI app - `evaluation/` metrics, scenarios, benchmarks -
+recovery - `services/` service layer + SQLite persistence - `api/` FastAPI app - `evaluation/` metrics, scenarios, benchmarks -
 `scenarios/` fixed JSON inputs - `ui/` Pygame app (+ a text view).
 
 ## Strategies (precise definitions)

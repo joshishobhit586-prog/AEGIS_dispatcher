@@ -6,3 +6,5 @@ data/*.db
 results/*
 !results/.gitkeep
 !data/.gitkeep
+data/*.db-wal
+data/*.db-shm

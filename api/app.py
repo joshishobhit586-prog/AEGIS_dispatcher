@@ -4,8 +4,9 @@ Run:  uvicorn api.app:app --reload        (docs at http://127.0.0.1:8000/docs)
   or: python main.py --api
 
 All planning/recovery logic lives in the application layer; this module only
-validates requests, routes them, and shapes responses. Simulations are held in
-memory (lost on restart). Do not expose this to the public internet as-is: there
+validates requests, routes them, and shapes responses. Live simulations are held in
+memory; every run is also saved to SQLite (see services/persistence.py, AEGIS_DB) so
+history survives restarts and a saved run can be resumed. Do not expose this to the public internet as-is: there
 is no authentication or rate limiting.
 """
 from __future__ import annotations
@@ -23,10 +24,13 @@ from config import STRATEGIES
 from evaluation import generator as gen
 from evaluation.run_benchmarks import run_scenario
 from evaluation.scenarios import load_scenario, scenario_paths
+from services import persistence as P
 from services.simulation_service import SimulationService
 
 SCENARIO_DIR = Path(os.environ.get("AEGIS_SCENARIOS_DIR", Path(__file__).resolve().parent.parent / "scenarios"))
 store = SimulationStore()
+db = P.open_database(os.environ.get("AEGIS_DB"))  # None when AEGIS_DB=off
+recorder = P.Recorder(db)
 
 app = FastAPI(
     title="AEGIS API",
@@ -53,6 +57,18 @@ def _entry(run_id: str) -> Entry:
     if entry is None:
         raise HTTPException(404, f"simulation {run_id!r} not found")
     return entry
+
+
+def _db() -> P.Database:
+    if db is None:
+        raise HTTPException(503, "persistence is disabled (AEGIS_DB=off)")
+    return db
+
+
+def _history_run(row: dict) -> dict:
+    return {k: row[k] for k in (
+        "run_id", "scenario", "strategy", "status", "tick", "width", "height", "robots", "tasks",
+        "actions", "created_at", "updated_at")} | {"live": store.get(row["run_id"]) is not None}
 
 
 def _event_to_sim(ev) -> dict:
@@ -129,7 +145,11 @@ def _info(entry: Entry) -> S.SimulationInfo:
 # ------------------------------------------------------------------- routes
 @app.get("/health", tags=["meta"])
 def health():
-    return {"status": "ok", "version": app.version, "live_simulations": len(store.all())}
+    return {
+        "status": "ok", "version": app.version, "live_simulations": len(store.all()),
+        "persistence": {"enabled": db is not None, "path": db.path if db else None,
+                        "saved_runs": db.count_runs() if db else 0},
+    }
 
 
 @app.get("/limits", response_model=S.Limits, tags=["meta"])
@@ -176,6 +196,7 @@ def create_simulation(req: S.CreateSimulation):
     except ValueError as exc:
         raise HTTPException(422, str(exc))
     entry = store.add(svc)
+    recorder.created(entry.run_id, svc, entry.created_at)
     return S.SimulationCreated(info=_info(entry), state=_state(entry, include_map=True))
 
 
@@ -206,10 +227,14 @@ def step(run_id: str, req: S.StepRequest = Body(default_factory=S.StepRequest),
     """Advance up to `ticks` ticks (stops early once the run is finished or stalled)."""
     entry = _entry(run_id)
     with entry.lock:
+        executed = 0
         for _ in range(req.ticks):
             if entry.service.status() != "running":
                 break
             entry.service.step()
+            executed += 1
+        if executed:
+            recorder.action(run_id, entry.service, "step", {"ticks": executed})
         return _state(entry, include_map)
 
 
@@ -219,6 +244,7 @@ def run_to_end(run_id: str, include_map: bool = False):
     entry = _entry(run_id)
     with entry.lock:
         entry.service.run_to_end()
+        recorder.action(run_id, entry.service, "run")
         return _state(entry, include_map)
 
 
@@ -227,6 +253,7 @@ def reset(run_id: str, include_map: bool = False):
     entry = _entry(run_id)
     with entry.lock:
         entry.service.reset()
+        recorder.reset(run_id, entry.service)
         return _state(entry, include_map)
 
 
@@ -252,6 +279,7 @@ def post_event(run_id: str, ev: S.EventRequest):
         else:
             t = ev.task
             svc.add_task(t.id, t.pickup, t.delivery, t.priority, t.deadline)
+        recorder.action(run_id, svc, "event", _event_to_sim(ev) | {"tick": sim.tick})
         new = sim.event_log[before:]
         rejected = [e for e in new if e["type"] in ("event_rejected", "assignment_rejected")]
         if rejected:
@@ -291,4 +319,98 @@ def benchmarks(req: S.BenchmarkRequest = Body(default_factory=S.BenchmarkRequest
     if req.scenarios is None and req.custom is None:
         scenarios = [load_scenario(p) for p in named.values()]
     rows = [run_scenario(sc, strat) for sc in scenarios for strat in STRATEGIES]
+    if db is not None:
+        try:
+            db.save_benchmark(rows)
+        except Exception as exc:  # never fail a benchmark because history could not be saved
+            P.log.warning("could not save benchmark history: %s", exc)
     return S.BenchmarkResponse(count=len(rows), rows=rows)
+
+
+@app.get("/benchmarks/history", response_model=List[S.StoredBenchmarkRow], tags=["benchmarks"])
+def benchmark_history(limit: int = Query(100, ge=1, le=1000)):
+    """Rows from earlier POST /benchmarks calls, newest first (grouped by batch_id)."""
+    return _db().list_benchmarks(limit)
+
+
+# ------------------------------------------------------------------ history
+@app.get("/history", response_model=List[S.HistoryRun], tags=["history"])
+def history(limit: int = Query(50, ge=1, le=500), scenario: Optional[str] = None,
+            strategy: Optional[str] = Query(None, pattern="^(baseline|aegis)$")):
+    """Saved runs, newest first. Survives restarts and eviction from memory."""
+    return [_history_run(r) for r in _db().list_runs(limit, scenario, strategy)]
+
+
+@app.get("/history/compare", response_model=S.CompareResponse, tags=["history"])
+def history_compare(scenario: str):
+    """Latest finished baseline vs aegis run of a scenario, with the difference."""
+    d = _db()
+    by = {strat: d.latest_finished(scenario, strat) for strat in STRATEGIES}
+    if all(v is None for v in by.values()):
+        raise HTTPException(404, f"no finished runs saved for scenario {scenario!r}")
+    out = S.CompareResponse(
+        scenario=scenario,
+        baseline=by["baseline"]["metrics"] if by["baseline"] else None,
+        aegis=by["aegis"]["metrics"] if by["aegis"] else None,
+    )
+    if by["baseline"] and by["aegis"]:
+        b, a = by["baseline"]["metrics"], by["aegis"]["metrics"]
+        out.delta = {k: round(a[k] - b[k], 2) for k in (
+            "completion_rate", "unserved_tasks", "total_distance", "total_delay",
+            "recovery_duration_ticks", "wait_ticks", "ticks")}
+    return out
+
+
+@app.get("/history/{run_id}", response_model=S.HistoryDetail, tags=["history"])
+def history_detail(run_id: str):
+    row = _db().get_run(run_id)
+    if row is None:
+        raise HTTPException(404, f"saved run {run_id!r} not found")
+    return {**_history_run(row), "metrics": row["metrics"]}
+
+
+@app.get("/history/{run_id}/events", response_model=List[S.EventRecord], tags=["history"])
+def history_events(run_id: str, limit: int = Query(100, ge=1, le=1000)):
+    row = _db().get_run(run_id)
+    if row is None:
+        raise HTTPException(404, f"saved run {run_id!r} not found")
+    return row["events"][-limit:]
+
+
+@app.get("/history/{run_id}/journal", response_model=List[S.JournalEntry], tags=["history"])
+def history_journal(run_id: str):
+    """The ordered actions that produced this run (replaying them rebuilds it exactly)."""
+    d = _db()
+    if d.get_run(run_id) is None:
+        raise HTTPException(404, f"saved run {run_id!r} not found")
+    return d.journal(run_id)
+
+
+@app.post("/history/{run_id}/resume", response_model=S.SimulationCreated, status_code=201,
+          tags=["history"])
+def history_resume(run_id: str):
+    """Bring a saved run back to life (after a restart or eviction) by replaying its journal."""
+    d = _db()
+    live = store.get(run_id)
+    if live is not None:
+        with live.lock:
+            return S.SimulationCreated(info=_info(live), state=_state(live, include_map=True))
+    row = d.get_run(run_id)
+    if row is None:
+        raise HTTPException(404, f"saved run {run_id!r} not found")
+    try:
+        svc = P.replay(row["scenario_def"], row["strategy"], d.journal(run_id))
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(409, f"saved run could not be replayed: {exc}")
+    entry = store.add(svc, run_id=run_id, created_at=row["created_at"])
+    with entry.lock:
+        return S.SimulationCreated(info=_info(entry), state=_state(entry, include_map=True))
+
+
+@app.delete("/history/{run_id}", status_code=204, tags=["history"])
+def history_delete(run_id: str):
+    """Permanently delete a saved run (and drop it from memory if live)."""
+    if not _db().delete_run(run_id):
+        raise HTTPException(404, f"saved run {run_id!r} not found")
+    store.delete(run_id)
+    return Response(status_code=204)

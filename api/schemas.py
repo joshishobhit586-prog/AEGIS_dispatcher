@@ -200,3 +200,47 @@ class Limits(BaseModel):
 class BenchmarkResponse(BaseModel):
     count: int
     rows: List[MetricsResponse]
+
+
+# ------------------------------------------------------------------ history
+class HistoryRun(BaseModel):
+    """A saved run (kept in SQLite; may or may not still be live in memory)."""
+    run_id: str
+    scenario: str
+    strategy: str
+    status: str
+    tick: int
+    width: int
+    height: int
+    robots: int
+    tasks: int
+    actions: int = Field(description="number of journaled actions (steps / runs / events)")
+    created_at: str
+    updated_at: str
+    live: bool = Field(description="True if the run is currently loaded in memory")
+
+
+class HistoryDetail(HistoryRun):
+    metrics: MetricsResponse
+
+
+class JournalEntry(BaseModel):
+    seq: int
+    op: Literal["step", "run", "event"]
+    tick: int
+    payload: Dict[str, Any]
+    created_at: str
+
+
+class CompareResponse(BaseModel):
+    """Latest finished baseline vs aegis run of one scenario, straight from saved history."""
+    scenario: str
+    baseline: Optional[MetricsResponse] = None
+    aegis: Optional[MetricsResponse] = None
+    delta: Dict[str, float] = Field(
+        default_factory=dict, description="aegis minus baseline (negative delay/unserved/ticks is better)")
+
+
+class StoredBenchmarkRow(MetricsResponse):
+    batch_id: int
+    created_at: str

@@ -1,4 +1,4 @@
-"""Application-facing API. The UI (and a future FastAPI layer) should only call this."""
+"""Application-facing API. The UI and the FastAPI layer only call this."""
 from __future__ import annotations
 
 from typing import List
@@ -52,6 +52,10 @@ class SimulationService:
             "task": {"id": task_id, "pickup": list(pickup), "delivery": list(delivery),
                      "priority": priority, "deadline": deadline},
         })
+
+    def apply_event(self, event: dict) -> None:
+        """Apply a raw event dict now (used when replaying a saved run)."""
+        self._act(event)
 
     def disable_robot(self, robot_id: str) -> None:
         self._act({"type": "robot_failure", "robot_id": robot_id})

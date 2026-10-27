@@ -26,14 +26,18 @@ class SimulationStore:
         self._entries: Dict[str, Entry] = {}
         self._guard = threading.Lock()
 
-    def add(self, service: SimulationService) -> Entry:
+    def add(self, service: SimulationService, run_id: str | None = None,
+            created_at: str | None = None) -> Entry:
+        """Register a live run. Pass run_id/created_at to bring a saved run back (resume)."""
         with self._guard:
+            if run_id is not None:
+                self._entries.pop(run_id, None)
             while len(self._entries) >= self.max_live:  # evict the oldest run
                 self._entries.pop(next(iter(self._entries)))
             entry = Entry(
-                run_id=uuid.uuid4().hex[:8],
+                run_id=run_id or uuid.uuid4().hex[:8],
                 service=service,
-                created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                created_at=created_at or datetime.now(timezone.utc).isoformat(timespec="seconds"),
             )
             self._entries[entry.run_id] = entry
             return entry
