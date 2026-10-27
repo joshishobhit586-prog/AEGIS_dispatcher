@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from copy import deepcopy
 from typing import Optional
 
 import pygame
@@ -46,10 +47,11 @@ class App:
         self.task_counter = 0
         self.notice = ("", 0)
         self.custom = None            # {"width","height","robots","seed"} when using a generated grid
+        self.scenario_override = None  # edited copy of a named test case
         self.running = True
         self._load()
         self._rebuild_view()
-        self.buttons = make_buttons(self, pygame.Rect(16, 516, 748, 102))
+        self.buttons = make_buttons(self, pygame.Rect(16, 516, 748, 138))
         self.keys = key_map(self)
 
     # ---------------------------------------------------------------- state
@@ -61,6 +63,8 @@ class App:
             sc = generate_scenario(self.custom["width"], self.custom["height"],
                                    self.custom["robots"], None, self.custom["seed"])
             self.snap = self.service.create_from_scenario(sc, self.strategy)
+        elif self.scenario_override is not None:
+            self.snap = self.service.create_from_scenario(deepcopy(self.scenario_override), self.strategy)
         else:
             self.snap = self.service.create(self.paths[self.idx], self.strategy)
         self.paused = True
@@ -141,12 +145,61 @@ class App:
         if self.custom is None:
             self.idx = (self.idx + 1) % len(self.paths)
         self.custom = None
+        self.scenario_override = None
         self._load()
         self._rebuild_view()
+
+    # --- customize a named test case without replacing its scenario ------
+    def _case_scenario_copy(self) -> dict:
+        if self.scenario_override is None:
+            self.scenario_override = deepcopy(self.service.scenario)
+        return self.scenario_override
+
+    def more_case_robots(self) -> None:
+        """Add a robot to the current test case, preserving its tasks and events."""
+        sc = self._case_scenario_copy()
+        width, height = len(sc["layout"][0]), len(sc["layout"])
+        if len(sc["robots"]) >= min(UI_MAX_ROBOTS, width * height):
+            return self.ticks_ms_notice("Robot limit reached for this test case")
+        occupied = {tuple(r["position"]) for r in sc["robots"]}
+        blocked = {"#"}
+        open_cells = [(x, y) for y, row in enumerate(sc["layout"])
+                      for x, char in enumerate(row) if char not in blocked and (x, y) not in occupied]
+        if not open_cells:
+            return self.ticks_ms_notice("No free floor cells for another robot")
+        # Prefer the top row, then use other open floor cells if needed.
+        open_cells.sort(key=lambda p: (p[1] != 0, p[1], p[0]))
+        used_ids = {r["id"] for r in sc["robots"]}
+        number = 1
+        while f"R{number}" in used_ids:
+            number += 1
+        sc["robots"].append({"id": f"R{number}", "position": list(open_cells[0])})
+        self._load()
+        self._rebuild_view()
+        self.ticks_ms_notice(f"{sc['name']}: added R{number}; tasks and events preserved")
+
+    def fewer_case_robots(self) -> None:
+        """Remove the highest-numbered robot from the current test case."""
+        sc = self._case_scenario_copy()
+        if len(sc["robots"]) <= 1:
+            return self.ticks_ms_notice("A test case needs at least one robot")
+        # Remove the highest-numbered ID where possible, without touching task/event definitions.
+        def robot_key(robot):
+            rid = robot["id"]
+            digits = "".join(ch for ch in rid if ch.isdigit())
+            return (int(digits) if digits else -1, rid)
+        removed = max(sc["robots"], key=robot_key)
+        sc["robots"].remove(removed)
+        # Remove only events that explicitly target the removed robot.
+        sc["events"] = [e for e in sc.get("events", []) if e.get("robot_id") != removed["id"]]
+        self._load()
+        self._rebuild_view()
+        self.ticks_ms_notice(f"{sc['name']}: removed {removed['id']}; remaining case preserved")
 
     # --- custom grid / fleet size ---------------------------------------
     def _ensure_custom(self) -> None:
         if self.custom is None:
+            self.scenario_override = None
             self.custom = {
                 "width": min(UI_MAX_W, max(UI_MIN_W, self.snap["width"])),
                 "height": min(UI_MAX_H, max(UI_MIN_H, self.snap["height"])),
@@ -298,8 +351,8 @@ class App:
             b.draw(screen, self.fonts["button"], b.rect.collidepoint(mouse),
                    active=(b.label.startswith("Routes") and self.show_routes)
                    or (b.label.startswith("Add task") and self.add_stage is not None))
-        panels.draw_legend(screen, pygame.Rect(16, 626, 748, 40), self.fonts)
-        panels.draw_event_log(screen, pygame.Rect(16, 672, 748, 140), self.fonts, self.service.events(60))
+        panels.draw_legend(screen, pygame.Rect(16, 660, 748, 34), self.fonts)
+        panels.draw_event_log(screen, pygame.Rect(16, 700, 748, 112), self.fonts, self.service.events(60))
         panels.draw_robots(screen, pygame.Rect(780, 56, 384, 150), self.fonts, self.snap, self.selected_robot)
         panels.draw_tasks(screen, pygame.Rect(780, 214, 384, 326), self.fonts, self.snap)
         panels.draw_metrics(screen, pygame.Rect(780, 548, 384, 264), self.fonts, self.service.metrics())

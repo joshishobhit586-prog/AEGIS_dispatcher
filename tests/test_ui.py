@@ -139,3 +139,28 @@ def test_new_layout_changes_tasks_and_scenario_key_leaves_custom(app):
 def test_quit_button_stops_the_loop(app):
     app.quit()
     assert app.running is False
+
+
+def test_case_robot_customization_preserves_test_case_tasks_and_events(app):
+    original_name = app.service.scenario_name
+    original_tasks = list(app.service.scenario["tasks"])
+    original_events = list(app.service.scenario["events"])
+    original_robot_count = len(app.snap["robots"])
+
+    app.more_case_robots()
+    assert app.service.scenario_name == original_name
+    assert len(app.snap["robots"]) == original_robot_count + 1
+    assert app.service.scenario["tasks"] == original_tasks
+    assert app.service.scenario["events"] == original_events
+
+    app.fewer_case_robots()
+    assert len(app.snap["robots"]) == original_robot_count
+    assert app.service.scenario["tasks"] == original_tasks
+    assert app.service.scenario["events"] == original_events
+
+
+def test_case_robot_customization_has_limits(app):
+    for _ in range(30):
+        app.fewer_case_robots()
+    assert len(app.snap["robots"]) == 1
+    assert "at least one" in app.notice[0]

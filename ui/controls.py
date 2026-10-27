@@ -43,14 +43,16 @@ def make_buttons(app, area: pygame.Rect) -> List[Button]:
         ("Scenario [C]", app.next_scenario),
         ("Slower [-]", app.slower),
         ("Faster [+]", app.faster),
-        ("Robots -  (key [)", app.fewer_robots),
-        ("Robots +  (key ])", app.more_robots),
+        ("Grid robots -  ([)", app.fewer_robots),
+        ("Grid robots +  (])", app.more_robots),
+        ("Case robots -", app.fewer_case_robots),
+        ("Case robots +", app.more_case_robots),
         ("Grid -  (key ,)", app.smaller_grid),
         ("Grid +  (key .)", app.bigger_grid),
         ("New layout [G]", app.new_layout),
         ("Quit [Q]", app.quit),
     ]
-    per_row, gap, h = 6, 6, 30
+    per_row, gap, h = 6, 5, 25
     w = (area.w - gap * (per_row - 1)) // per_row
     buttons = []
     for i, (label, fn) in enumerate(spec):
