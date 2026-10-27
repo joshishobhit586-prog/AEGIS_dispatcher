@@ -73,10 +73,36 @@ class GridView:
                     inner = rect.inflate(-6 if self.compact else -10, -6 if self.compact else -10)
                     pygame.draw.rect(surf, SHELF_IN, inner, 1 if self.compact else 2, border_radius=2)
                     if not self.compact:
+                        # Stock cartons make each shelf read as stocked inventory,
+                        # while keeping shelf tiles impassable to the robots.
                         pygame.draw.line(surf, (48, 65, 87), (inner.left + 2, inner.centery),
                                          (inner.right - 2, inner.centery), 2)
                         pygame.draw.line(surf, (48, 65, 87), (inner.left + 2, inner.top + 4),
                                          (inner.right - 2, inner.top + 4), 1)
+                        carton_colors = ((74, 190, 171), (237, 174, 82), (135, 153, 235))
+                        carton_w = max(3, min(7, inner.width // 4))
+                        carton_h = max(3, min(6, inner.height // 5))
+                        for n, carton_color in enumerate(carton_colors):
+                            cx = inner.left + 4 + (n % 2) * (carton_w + 3)
+                            cy = inner.top + 5 + (n // 2) * (carton_h + 2)
+                            if cx + carton_w < inner.right and cy + carton_h < inner.bottom:
+                                pygame.draw.rect(surf, carton_color,
+                                                 pygame.Rect(cx, cy, carton_w, carton_h),
+                                                 border_radius=1)
+                        # Stable stock count per shelf cell, so the demo looks
+                        # consistent across runs without introducing random UI state.
+                        stock = 4 + ((x * 7 + y * 3) % 20)
+                        count_font = fonts.get("tiny")
+                        if count_font:
+                            label = count_font.render(str(stock), True, (238, 244, 252))
+                            surf.blit(label, (inner.right - label.get_width() - 2,
+                                              inner.bottom - label.get_height() - 1))
+                    else:
+                        # Tiny inventory marker remains legible on dense grids.
+                        pygame.draw.circle(surf, (74, 190, 171),
+                                           (rect.centerx - 3, rect.centery), 2)
+                        pygame.draw.circle(surf, (237, 174, 82),
+                                           (rect.centerx + 3, rect.centery), 2)
                 elif (x, y) in blocked:
                     pygame.draw.rect(surf, BLOCK_BG, rect)
                     pygame.draw.rect(surf, FLOOR_LINE, rect, 1)
