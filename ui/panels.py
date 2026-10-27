@@ -7,7 +7,7 @@ from ui.renderer import BAD, DIM, GOOD, PANEL, PANEL_EDGE, TEXT, UNASSIGNED, rob
 
 LOG_COLORS = {
     "robot_failure": BAD, "task_failed": BAD, "event_rejected": BAD, "block_cell": BAD,
-    "recovery": GOOD, "delivery": (140, 190, 255), "task_unserved": (255, 190, 90),
+    "recovery": GOOD, "delivery": (102, 190, 255), "task_unserved": (255, 190, 90),
     "task_unassignable": (255, 190, 90),
 }
 
@@ -21,13 +21,17 @@ def fit(font, text: str, max_w: int) -> str:
 
 
 def box(surf, rect, title, fonts) -> None:
-    pygame.draw.rect(surf, PANEL, rect, border_radius=6)
-    pygame.draw.rect(surf, PANEL_EDGE, rect, 1, border_radius=6)
-    surf.blit(fonts["bold"].render(title, True, TEXT), (rect.x + 10, rect.y + 6))
+    pygame.draw.rect(surf, PANEL, rect, border_radius=10)
+    pygame.draw.rect(surf, PANEL_EDGE, rect, 1, border_radius=10)
+    # Small cyan accent makes panel headings easier to scan.
+    pygame.draw.line(surf, (63, 207, 219), (rect.x + 10, rect.y + 9),
+                     (rect.x + 10, rect.y + 23), 3)
+    surf.blit(fonts["bold"].render(title.upper(), True, TEXT), (rect.x + 19, rect.y + 6))
 
 
 def draw_status_bar(surf, rect, fonts, info: dict) -> None:
     pygame.draw.rect(surf, PANEL, rect)
+    pygame.draw.line(surf, (63, 207, 219), (0, rect.bottom - 2), (rect.right, rect.bottom - 2), 2)
     state = info["state"].upper()
     left = f"AEGIS | {info['scenario']} | strategy: {info['strategy'].upper()} | tick {info['tick']}"
     surf.blit(fonts["bold"].render(left, True, TEXT), (16, 13))

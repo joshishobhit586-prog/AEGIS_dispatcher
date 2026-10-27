@@ -285,6 +285,11 @@ class App:
             "tick": self.snap["tick"], "state": self._status(),
             "speed": SPEEDS[self.speed_idx], "notice": notice,
         })
+        # Framed warehouse canvas: a clear boundary separates the map from controls/logs.
+        grid_frame = pygame.Rect(8, 48, 764, 466)
+        pygame.draw.rect(screen, (8, 13, 23), grid_frame.inflate(4, 4), border_radius=12)
+        pygame.draw.rect(screen, (18, 28, 43), grid_frame, border_radius=10)
+        pygame.draw.rect(screen, (48, 69, 94), grid_frame, 1, border_radius=10)
         hint = self.pending_pickup if self.add_stage == "delivery" else None
         self.view.draw(screen, self.snap, self.fonts, self.show_routes,
                        self.selected_cell, self.selected_robot, hint)

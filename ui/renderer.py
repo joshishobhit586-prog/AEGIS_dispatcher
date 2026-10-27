@@ -7,24 +7,28 @@ import pygame
 
 Cell = Tuple[int, int]
 
-BG = (24, 26, 31)
-PANEL = (36, 39, 46)
-PANEL_EDGE = (70, 75, 86)
-TEXT = (232, 234, 238)
-DIM = (150, 156, 168)
-FLOOR = (238, 237, 230)
-FLOOR_LINE = (214, 212, 204)
-SHELF = (122, 96, 70)
-SHELF_IN = (150, 122, 92)
-BLOCK_BG = (244, 200, 196)
-BLOCK_X = (190, 40, 40)
-UNASSIGNED = (130, 130, 138)
-SELECT = (255, 196, 0)
-GOOD = (90, 200, 120)
-BAD = (240, 100, 100)
+# AEGIS Control Room palette: deep navy, cool slate, and restrained cyan/amber accents.
+BG = (12, 18, 30)
+PANEL = (22, 32, 49)
+PANEL_EDGE = (48, 67, 91)
+TEXT = (229, 238, 249)
+DIM = (143, 161, 184)
+FLOOR = (25, 39, 57)
+FLOOR_ALT = (28, 43, 62)
+FLOOR_LINE = (43, 61, 82)
+FLOOR_DOT = (49, 68, 90)
+SHELF = (63, 84, 111)
+SHELF_IN = (105, 132, 162)
+BLOCK_BG = (75, 38, 53)
+BLOCK_X = (255, 91, 112)
+UNASSIGNED = (113, 132, 155)
+SELECT = (255, 190, 75)
+GOOD = (53, 211, 164)
+BAD = (255, 91, 112)
 ROBOT_COLORS = [
-    (40, 110, 220), (30, 150, 90), (200, 110, 20), (140, 60, 170), (0, 140, 150), (180, 45, 95),
-    (90, 90, 200), (120, 140, 20), (200, 70, 50), (60, 120, 120), (160, 100, 160), (110, 80, 40),
+    (66, 153, 225), (53, 211, 164), (255, 177, 74), (180, 126, 255),
+    (63, 207, 219), (255, 112, 153), (129, 140, 248), (190, 220, 94),
+    (255, 130, 92), (83, 195, 184), (218, 139, 232), (211, 174, 122),
 ]
 STATUS_LETTER = {"IDLE": "I", "MOVING": "M", "WAITING": "W", "UNAVAILABLE": "X"}
 
@@ -65,24 +69,38 @@ class GridView:
                 rect = self.cell_rect((x, y))
                 if (x, y) in shelves:
                     pygame.draw.rect(surf, SHELF, rect)
+                    # Shelves read as storage racks rather than solid wall tiles.
+                    inner = rect.inflate(-6 if self.compact else -10, -6 if self.compact else -10)
+                    pygame.draw.rect(surf, SHELF_IN, inner, 1 if self.compact else 2, border_radius=2)
                     if not self.compact:
-                        pygame.draw.rect(surf, SHELF_IN, rect.inflate(-10, -10), 2)
+                        pygame.draw.line(surf, (48, 65, 87), (inner.left + 2, inner.centery),
+                                         (inner.right - 2, inner.centery), 2)
+                        pygame.draw.line(surf, (48, 65, 87), (inner.left + 2, inner.top + 4),
+                                         (inner.right - 2, inner.top + 4), 1)
                 elif (x, y) in blocked:
                     pygame.draw.rect(surf, BLOCK_BG, rect)
                     pygame.draw.rect(surf, FLOOR_LINE, rect, 1)
-                    m, w = (3, 2) if self.compact else (6, 4)
+                    m, w = (3, 2) if self.compact else (6, 3)
                     pygame.draw.line(surf, BLOCK_X, (rect.left + m, rect.top + m), (rect.right - m, rect.bottom - m), w)
                     pygame.draw.line(surf, BLOCK_X, (rect.right - m, rect.top + m), (rect.left + m, rect.bottom - m), w)
                 else:
-                    pygame.draw.rect(surf, FLOOR, rect)
+                    pygame.draw.rect(surf, FLOOR_ALT if (x + y) % 2 else FLOOR, rect)
                     pygame.draw.rect(surf, FLOOR_LINE, rect, 1)
+                    if not self.compact:
+                        # Tiny floor rivet gives the grid texture without competing with routes.
+                        pygame.draw.circle(surf, FLOOR_DOT, (rect.right - 4, rect.bottom - 4), 1)
 
         if show_routes:
+            # Draw a subdued underlay first so routes stay readable across every tile.
+            route_layer = pygame.Surface(surf.get_size(), pygame.SRCALPHA)
             for r in snap["robots"]:
                 pts = [self.center(tuple(c)) for c in r["route"]]
                 if len(pts) >= 2:
-                    pygame.draw.lines(surf, colors[r["robot_id"]], False, pts, 3)
-                    pygame.draw.circle(surf, colors[r["robot_id"]], pts[-1], 5, 2)
+                    col = colors[r["robot_id"]]
+                    pygame.draw.lines(route_layer, (*col, 62), False, pts, 7 if not self.compact else 5)
+                    pygame.draw.lines(route_layer, (*col, 205), False, pts, 2 if not self.compact else 1)
+                    pygame.draw.circle(route_layer, (*col, 235), pts[-1], 4 if not self.compact else 3, 2)
+            surf.blit(route_layer, (0, 0))
 
         self._draw_tasks(surf, snap, fonts, colors)
         self._draw_robots(surf, snap, fonts, colors, selected_robot)
@@ -119,7 +137,7 @@ class GridView:
                     pygame.draw.polygon(surf, col, [(cx, cy - 5), (cx - 5, cy + 4), (cx + 5, cy + 4)])
                 else:                 # hollow square = delivery
                     pygame.draw.rect(surf, col, pygame.Rect(cx - 5, cy - 5, 10, 10), 2)
-                label = fonts["tiny"].render(t["task_id"], True, (40, 40, 46))
+                label = fonts["tiny"].render(t["task_id"], True, (229, 238, 249))
                 surf.blit(label, (cx + 8, cy - 5))
 
     def _draw_robots(self, surf, snap, fonts, colors, selected_robot) -> None:
@@ -128,10 +146,13 @@ class GridView:
             rect = self.cell_rect(tuple(r["position"])).inflate(-4, -4) if self.compact \
                 else self.cell_rect(tuple(r["position"])).inflate(-10, -10)
             down = r["status"] == "UNAVAILABLE"
-            col = (110, 110, 118) if down else colors[r["robot_id"]]
-            pygame.draw.rect(surf, col, rect, border_radius=8)
-            outline = (255, 255, 255) if r["robot_id"] == selected_robot else (20, 20, 24)
-            pygame.draw.rect(surf, outline, rect, 3 if r["robot_id"] == selected_robot else 1, border_radius=8)
+            col = (75, 87, 105) if down else colors[r["robot_id"]]
+            # Offset shadow gives the robot marker a little depth while staying a simple square.
+            shadow = rect.move(2, 2)
+            pygame.draw.rect(surf, (9, 15, 25), shadow, border_radius=7)
+            pygame.draw.rect(surf, col, rect, border_radius=7)
+            outline = (255, 255, 255) if r["robot_id"] == selected_robot else (11, 20, 32)
+            pygame.draw.rect(surf, outline, rect, 3 if r["robot_id"] == selected_robot else 1, border_radius=7)
             if self.compact:
                 label = fonts["tiny"].render(r["robot_id"][1:], True, (255, 255, 255))
                 surf.blit(label, label.get_rect(center=rect.center))

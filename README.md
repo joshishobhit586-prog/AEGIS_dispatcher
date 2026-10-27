@@ -151,3 +151,7 @@ added after scaling up the grid exposed deadlocks and livelocks; regression test
   (including random failures and blocked cells) had a collision or crashed.
 - Cost weights in `config.py` are untuned starting values.
 - Seeds only affect generated task placement; the simulator itself is deterministic.
+
+
+### UI theme
+The Pygame simulation uses a dark navy control-room theme with high-contrast robot colors, clearer panel headings, and highlighted interactive controls. Simulation logic and API behavior are unchanged.

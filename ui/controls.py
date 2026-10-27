@@ -19,11 +19,12 @@ class Button:
         return self.rect.collidepoint(pos)
 
     def draw(self, surf, font, hover: bool, active: bool = False) -> None:
-        fill = (74, 84, 110) if hover else (52, 57, 70)
+        fill = (48, 76, 105) if hover else (29, 44, 64)
         if active:
-            fill = (60, 110, 80)
-        pygame.draw.rect(surf, fill, self.rect, border_radius=5)
-        pygame.draw.rect(surf, PANEL_EDGE, self.rect, 1, border_radius=5)
+            fill = (24, 91, 83)
+        pygame.draw.rect(surf, fill, self.rect, border_radius=8)
+        pygame.draw.rect(surf, (68, 91, 119) if hover or active else PANEL_EDGE,
+                         self.rect, 1, border_radius=8)
         img = font.render(self.label, True, TEXT)
         surf.blit(img, img.get_rect(center=self.rect.center))
 
